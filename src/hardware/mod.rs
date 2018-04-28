@@ -48,7 +48,7 @@ impl Hardware {
         }
         let status = Command::new("sh")
             .arg("-c")
-            .arg(format!("fswebcam -r 640x480 --flip v {}", file_name))
+            .arg(format!("fswebcam -r 640x480 --flip v --flip h {}", file_name))
             .status();
         self.turn_off_spotlight();
         let status = status?;
