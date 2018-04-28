@@ -15,10 +15,12 @@ log-panics = "*"
 diesel = { version = "*", features = ["postgres"] }
 diesel_infer_schema = { version = "*", features = ["postgres"] }
 dotenv = "*"
+sysfs_gpio = "*"
+chrono = "*"
 erased-serde = "*"
 [dependencies.teleborg]
-#git = "https://github.com/tiberiusferreira/teleborg.git"
-path = "../../teleborg"
-#branch = "fix_getting_updates"
+git = "https://github.com/tiberiusferreira/teleborg.git"
+branch = "fix_getting_updates"
+#path = "../../teleborg"
 
 
