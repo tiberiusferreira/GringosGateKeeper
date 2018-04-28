@@ -77,7 +77,7 @@ impl <T: TelegramInterface> GringosGateKeeperBot<T> {
             },
             TAKE_PIC => {
                 let file_path;
-                if self.last_pic_date.elapsed().as_secs() > 3 {
+                if self.last_pic_date.elapsed().as_secs() > 10 {
                     file_path = match self.hardware.take_pic() {
                         Ok(file_path) => file_path,
                         Err(e) => {
