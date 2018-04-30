@@ -3,6 +3,7 @@ extern crate chrono;
 
 use self::chrono::prelude::*;
 use self::sysfs_gpio::{Pin, Direction};
+const GATE_OPEN_SENSOR: u64 = 16;
 const GATE: u64 = 20;
 const SPOTLIGHT: u64 = 21;
 use std::thread::sleep;
@@ -11,7 +12,8 @@ use std::process::{Command};
 use failure::{Error};
 pub struct Hardware {
     gate: Pin,
-    spotlight: Pin
+    spotlight: Pin,
+    gate_open_sensor: Pin
 }
 
 #[derive(Debug, Fail)]
@@ -28,6 +30,12 @@ impl Hardware {
         gate.export().expect(&format!("Could not export pin {} to user space.", GATE));
         sleep(Duration::from_millis(500));
         gate.set_direction(Direction::Out).expect(&format!("Could not set pin {} direction to Out", GATE));
+
+        let gate_open_sensor = Pin::new(GATE_OPEN_SENSOR);
+        gate_open_sensor.export().expect(&format!("Could not export pin {} to user space.", GATE_OPEN_SENSOR));
+        sleep(Duration::from_millis(500));
+        gate_open_sensor.set_direction(Direction::In).expect(&format!("Could not set pin {} direction to Out", GATE_OPEN_SENSOR));
+
         let spotlight = Pin::new(SPOTLIGHT);
         spotlight.export().expect(&format!("Could not export pin {} to user space.", SPOTLIGHT));
         sleep(Duration::from_millis(500));
@@ -36,7 +44,8 @@ impl Hardware {
         gate.set_value(0).expect(&format!("Could not set GATE_PIN_NUMBER {} to 0 on startup", GATE));
         Hardware {
             gate,
-            spotlight
+            spotlight,
+            gate_open_sensor
         }
     }
 
@@ -59,6 +68,10 @@ impl Hardware {
                 code: status.code()
             })?;
         }
+    }
+
+    pub fn gate_is_open(&self) -> bool{
+        return self.gate_open_sensor.get_value().expect(&format!("Could not get value of GATE_OPEN_SENSOR PIN {}", GATE_OPEN_SENSOR)) == 0;
     }
 
     pub fn open_gate(&self){

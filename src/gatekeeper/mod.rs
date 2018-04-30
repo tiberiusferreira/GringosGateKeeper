@@ -1,5 +1,6 @@
 extern crate failure;
 mod update_handler;
+mod gate_open_handler;
 
 use diesel::{PgConnection};
 use database::establish_connection;
@@ -12,7 +13,8 @@ pub struct GringosGateKeeperBot<T> where T: TelegramInterface{
     database_connection: PgConnection,
     hardware: Hardware,
     last_pic_date: std::time::Instant,
-    last_pic_path: String
+    last_pic_path: String,
+    instant_when_was_opened: Option<std::time::Instant>
 }
 
 impl <T: TelegramInterface> GringosGateKeeperBot<T>{
@@ -28,7 +30,8 @@ impl <T: TelegramInterface> GringosGateKeeperBot<T>{
             database_connection: establish_connection(),
             hardware: Hardware::new(),
             last_pic_date: std::time::Instant::now(),
-            last_pic_path: "rep_now.jpg".to_string()
+            last_pic_path: "rep_now.jpg".to_string(),
+            instant_when_was_opened: None
         }
     }
 
@@ -42,12 +45,16 @@ impl <T: TelegramInterface> GringosGateKeeperBot<T>{
 
         self.telegram_api.start_getting_updates();
 
-
         loop {
-            let updates = self.telegram_api.get_updates_channel().recv().unwrap();
-            for update in updates {
+            if let Ok(updates) = self.telegram_api.get_updates_channel().try_recv(){
+                for update in updates {
                     self.handle_update(update);
+                }
             }
+            if self.hardware.gate_is_open(){
+                self.handle_gate_open();
+            }
+            std::thread::sleep(std::time::Duration::from_millis(200));
         }
     }
 }

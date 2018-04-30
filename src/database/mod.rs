@@ -8,15 +8,27 @@ use diesel::pg::PgConnection;
 use self::dotenv::dotenv;
 use std::env;
 use diesel::result;
-
-
+use std::time::Duration;
+use std;
 
 pub fn establish_connection() -> PgConnection {
     dotenv().ok();
     let database_url = env::var("DATABASE_URL")
         .expect("DATABASE_URL must be set");
-    PgConnection::establish(&database_url)
-        .expect(&format!("Error connecting to {}", database_url))
+
+    let mut number_errors_up_to_2000 = 0;
+    loop {
+        match PgConnection::establish(&database_url) {
+            Ok(pg_conection) => return pg_conection,
+            Err(e) => {
+                number_errors_up_to_2000 = (number_errors_up_to_2000 + 1) % 2000;
+                error!("Error connecting to DB: {:?}", e);
+                error!("Sleeping for: {} seconds.", 60*number_errors_up_to_2000);
+                std::thread::sleep(Duration::from_secs(60*number_errors_up_to_2000));
+            }
+        }
+    }
+
 }
 
 use self::models::CoffeezeraUser;

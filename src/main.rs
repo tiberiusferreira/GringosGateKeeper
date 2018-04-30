@@ -33,7 +33,6 @@ fn main() {
         gatekeeper::GringosGateKeeperBot::<teleborg::Bot>::emergency_turn_off();
     }));
 
-
     let mut gk = gatekeeper::GringosGateKeeperBot::<teleborg::Bot>::new();
     gk.start();
 }
