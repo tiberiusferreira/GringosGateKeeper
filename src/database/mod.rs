@@ -5,9 +5,11 @@ extern crate dotenv;
 
 use diesel::prelude::*;
 use diesel::pg::PgConnection;
-use self::dotenv::dotenv;
 use std::env;
 use diesel::result;
+use self::models::CoffeezeraUser;
+use self::schema::coffeezera_users::dsl::*;
+use self::dotenv::dotenv;
 use std::time::Duration;
 use std;
 
@@ -19,7 +21,7 @@ pub fn establish_connection() -> PgConnection {
     let mut number_errors_up_to_2000 = 0;
     loop {
         match PgConnection::establish(&database_url) {
-            Ok(pg_conection) => return pg_conection,
+            Ok(pg_connection) => return pg_connection,
             Err(e) => {
                 number_errors_up_to_2000 = (number_errors_up_to_2000 + 1) % 2000;
                 error!("Error connecting to DB: {:?}", e);
@@ -31,12 +33,8 @@ pub fn establish_connection() -> PgConnection {
 
 }
 
-use self::models::CoffeezeraUser;
-
 
 pub fn get_user<'a>(conn: &PgConnection, input_telegram_id: i64) -> Result<CoffeezeraUser, result::Error> {
-    use self::schema::coffeezera_users::dsl::{coffeezera_users, telegram_id};
-
     coffeezera_users.filter(telegram_id.eq(input_telegram_id))
         .get_result::<CoffeezeraUser>(conn)
 }

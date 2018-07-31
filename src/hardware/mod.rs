@@ -3,13 +3,15 @@ extern crate chrono;
 
 use self::chrono::prelude::*;
 use self::sysfs_gpio::{Pin, Direction};
-const GATE_OPEN_SENSOR: u64 = 16;
-const GATE: u64 = 20;
-const SPOTLIGHT: u64 = 21;
 use std::thread::sleep;
 use std::time::Duration;
 use std::process::{Command};
 use failure::{Error};
+
+const GATE_OPEN_SENSOR: u64 = 25;
+const GATE: u64 = 20;
+const SPOTLIGHT: u64 = 21;
+
 pub struct Hardware {
     gate: Pin,
     spotlight: Pin,
@@ -30,6 +32,8 @@ impl Hardware {
         gate.export().expect(&format!("Could not export pin {} to user space.", GATE));
         sleep(Duration::from_millis(500));
         gate.set_direction(Direction::Out).expect(&format!("Could not set pin {} direction to Out", GATE));
+        sleep(Duration::from_millis(500));
+        gate.set_value(0).expect(&format!("Could not set GATE_PIN_NUMBER {} to 0 on startup", GATE));
 
         let gate_open_sensor = Pin::new(GATE_OPEN_SENSOR);
         gate_open_sensor.export().expect(&format!("Could not export pin {} to user space.", GATE_OPEN_SENSOR));
@@ -41,7 +45,8 @@ impl Hardware {
         sleep(Duration::from_millis(500));
         spotlight.set_direction(Direction::Out).expect(&format!("Could not set pin {} direction to Out", SPOTLIGHT));
         spotlight.set_value(0).expect(&format!("Could not set SPOTLIGHT_PIN {} to 0 on startup", GATE));
-        gate.set_value(0).expect(&format!("Could not set GATE_PIN_NUMBER {} to 0 on startup", GATE));
+
+
         Hardware {
             gate,
             spotlight,
@@ -51,15 +56,19 @@ impl Hardware {
 
     pub fn take_pic(&self) -> Result<String, Error>{
         let file_name = "rep_now.jpg";
-        let dt = chrono::Local::now() ;
-        if dt.hour() < 7 || dt.hour() > 18 {
-            self.turn_on_spotlight();
+        let dt = chrono::Local::now();
+        if !self.gate_is_open() {
+            if dt.hour() <= 7 || dt.hour() >= 17 {
+                self.turn_on_spotlight();
+            }
         }
         let status = Command::new("sh")
             .arg("-c")
             .arg(format!("fswebcam -S 5 -r 640x480 --flip v --flip h {}", file_name))
             .status();
-        self.turn_off_spotlight();
+        if !self.gate_is_open() {
+            self.turn_off_spotlight();
+        }
         let status = status?;
         if status.success(){
             return Ok(file_name.to_string());

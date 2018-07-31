@@ -42,9 +42,7 @@ impl <T: TelegramInterface> GringosGateKeeperBot<T>{
     }
 
     pub fn start(&mut self){
-
         self.telegram_api.start_getting_updates();
-
         loop {
             if let Ok(updates) = self.telegram_api.get_updates_channel().try_recv(){
                 for update in updates {
@@ -53,6 +51,10 @@ impl <T: TelegramInterface> GringosGateKeeperBot<T>{
             }
             if self.hardware.gate_is_open(){
                 self.handle_gate_open();
+            }else{
+                if self.instant_when_was_opened.is_some(){
+                    self.instant_when_was_opened.take();
+                }
             }
             std::thread::sleep(std::time::Duration::from_millis(200));
         }

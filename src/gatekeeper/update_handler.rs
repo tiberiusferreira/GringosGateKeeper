@@ -3,8 +3,8 @@ use teleborg::objects::Update;
 use teleborg::*;
 use super::*;
 use std;
-const OPEN: &'static str  = "Abrir";
-const TAKE_PIC: &'static str  = "Tirar Foto";
+const OPEN: &str  = "Abrir";
+const TAKE_PIC: &str  = "Tirar Foto";
 
 impl <T: TelegramInterface> GringosGateKeeperBot<T> {
     pub (in super) fn handle_update(&mut self, update: Update){
@@ -101,6 +101,7 @@ impl <T: TelegramInterface> GringosGateKeeperBot<T> {
                     show_alert: Some(false)
                 });
                 self.telegram_api.send_photo(OutgoingPhoto::new(cleaned_callback_query.original_msg_chat_id, &file_path));
+                self.send_default_msg(cleaned_callback_query.original_msg_chat_id);
             },
             e => {
                 error!("Unexpected Callback: {}", e);

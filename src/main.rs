@@ -3,7 +3,6 @@ extern crate flexi_logger;
 extern crate teleborg;
 extern crate log_panics;
 #[macro_use] extern crate log;
-#[macro_use] extern crate diesel_infer_schema;
 #[macro_use] extern crate diesel;
 #[macro_use] extern crate failure;
 
@@ -14,6 +13,7 @@ use flexi_logger::{opt_format, Logger};
 
 // Holofone : 21
 // Portao : 20
+// Sensor Abertura : 25
 
 //echo "1" > /sys/class/gpio/gpio21/value
 

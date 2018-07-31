@@ -1,2 +1,9 @@
-//infer_schema!("dotenv:DATABASE_URL");
-infer_table_from_schema!("dotenv:DATABASE_URL", "coffeezera_users");
+table! {
+    coffeezera_users (id) {
+        id -> Int4,
+        name -> Varchar,
+        telegram_id -> Int8,
+        account_balance -> Float8,
+        is_resident -> Bool,
+    }
+}
