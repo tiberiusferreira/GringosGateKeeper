@@ -14,7 +14,8 @@ pub struct GringosGateKeeperBot<T> where T: TelegramInterface{
     hardware: Hardware,
     last_pic_date: std::time::Instant,
     last_pic_path: String,
-    instant_when_was_opened: Option<std::time::Instant>
+    instant_when_was_opened: Option<std::time::Instant>,
+    sent_open_warning: bool
 }
 
 impl <T: TelegramInterface> GringosGateKeeperBot<T>{
@@ -31,7 +32,8 @@ impl <T: TelegramInterface> GringosGateKeeperBot<T>{
             hardware: Hardware::new(),
             last_pic_date: std::time::Instant::now(),
             last_pic_path: "rep_now.jpg".to_string(),
-            instant_when_was_opened: None
+            instant_when_was_opened: None,
+            sent_open_warning: false
         }
     }
 
@@ -53,7 +55,10 @@ impl <T: TelegramInterface> GringosGateKeeperBot<T>{
                 self.handle_gate_open();
             }else{
                 if self.instant_when_was_opened.is_some(){
+                    self.hardware.turn_off_spotlight();
                     self.instant_when_was_opened.take();
+                    self.telegram_api.send_msg(OutgoingMessage::new(75698394, "O portão foi fechado!"));
+                    self.sent_open_warning = false;
                 }
             }
             std::thread::sleep(std::time::Duration::from_millis(200));
