@@ -14,12 +14,12 @@ failure = "*"
 log-panics = "*"
 diesel = { version = "*", features = ["postgres"] }
 dotenv = "*"
+crossbeam-channel = "*"
 sysfs_gpio = "*"
 chrono = "*"
 erased-serde = "*"
 [dependencies.teleborg]
 git = "https://github.com/tiberiusferreira/teleborg.git"
 branch = "fix_getting_updates"
-#path = "../../teleborg"
-
+#path = "../teleborg"
 

@@ -15,7 +15,7 @@ const SPOTLIGHT: u64 = 21;
 pub struct Hardware {
     gate: Pin,
     spotlight: Pin,
-    gate_open_sensor: Pin
+    pub gate_open_sensor: Pin
 }
 
 #[derive(Debug, Fail)]

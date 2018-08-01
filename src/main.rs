@@ -5,7 +5,7 @@ extern crate log_panics;
 #[macro_use] extern crate log;
 #[macro_use] extern crate diesel;
 #[macro_use] extern crate failure;
-
+#[macro_use] extern crate crossbeam_channel;
 mod database;
 mod gatekeeper;
 mod hardware;
@@ -15,7 +15,6 @@ use flexi_logger::{opt_format, Logger};
 // Portao : 20
 // Sensor Abertura : 25
 
-//echo "1" > /sys/class/gpio/gpio21/value
 
 fn main() {
     log_panics::init();
