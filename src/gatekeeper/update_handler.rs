@@ -3,6 +3,8 @@ use teleborg::objects::Update;
 use teleborg::*;
 use super::*;
 use std;
+use std::time::Instant;
+
 const OPEN: &str  = "Abrir";
 const TAKE_PIC: &str  = "Tirar Foto";
 
@@ -11,10 +13,10 @@ impl <T: TelegramInterface> GringosGateKeeperBot<T> {
         info!("Got update: {:?}", update);
         match clean_update(update){
             Ok(cleaned_update) => {
-                if self.check_user_is_authorized_reply_if_not(cleaned_update.clone()){
+                if let Some(db_user) = self.get_user_if_authorized_reply_if_not(cleaned_update.clone()) {
                     match cleaned_update {
                         CleanedUpdate::CleanedMessage(cleaned_msg) => self.handle_msg(cleaned_msg),
-                        CleanedUpdate::CleanedCallbackQuery(cleaned_callback) => self.handle_callback(cleaned_callback)
+                        CleanedUpdate::CleanedCallbackQuery(cleaned_callback) => self.handle_callback(cleaned_callback, db_user)
                     };
                 }
             },
@@ -24,7 +26,7 @@ impl <T: TelegramInterface> GringosGateKeeperBot<T> {
         }
     }
 
-    fn check_user_is_authorized_reply_if_not(&self, cleaned_update: CleanedUpdate) -> bool{
+    fn get_user_if_authorized_reply_if_not(&self, cleaned_update: CleanedUpdate) -> Option<CoffeezeraUser>{
         let (sender_id, sender_chat_id) = match cleaned_update {
             CleanedUpdate::CleanedMessage(cleaned_msg) => (cleaned_msg.sender_id, cleaned_msg.chat_id),
             CleanedUpdate::CleanedCallbackQuery(cleaned_callback) => (cleaned_callback.sender_id, cleaned_callback.original_msg_chat_id)
@@ -32,15 +34,15 @@ impl <T: TelegramInterface> GringosGateKeeperBot<T> {
         match get_user(&self.database_connection, sender_id){
             Ok(db_user) => {
                 if db_user.is_resident{
-                    return true;
+                    return Some(db_user);
                 }else{
                     self.send_not_resident_reply(sender_chat_id);
-                    return false;
+                    return None;
                 }
             },
             Err(_) =>{
                 self.send_not_registered_msg(sender_chat_id, sender_id);
-                return false;
+                return None;
             }
         }
     }
@@ -65,10 +67,14 @@ impl <T: TelegramInterface> GringosGateKeeperBot<T> {
         self.send_default_msg(cleaned_msg.chat_id);
     }
 
-    fn handle_callback(&mut self, cleaned_callback_query: CleanedCallbackQuery){
+    fn handle_callback(&mut self, cleaned_callback_query: CleanedCallbackQuery, db_user: CoffeezeraUser){
         match cleaned_callback_query.data.as_ref() {
             OPEN => {
                 self.hardware.open_gate();
+                self.last_opening_by_bot = Some(LastOpeningData{
+                    who_last_opened_it: db_user,
+                    when_user_opened: Instant::now(),
+                });
                 self.telegram_api.send_callback_answer(AnswerCallbackQuery{
                     callback_query_id: cleaned_callback_query.callback_id,
                     text: Some("Aberto".to_string()),
@@ -77,7 +83,7 @@ impl <T: TelegramInterface> GringosGateKeeperBot<T> {
             },
             TAKE_PIC => {
                 let file_path;
-                if self.last_pic_date.elapsed().as_secs() > 10 {
+                if self.picture_context.last_pic_date.elapsed().as_secs() > 10 {
                     file_path = match self.hardware.take_pic() {
                         Ok(file_path) => file_path,
                         Err(e) => {
@@ -90,10 +96,10 @@ impl <T: TelegramInterface> GringosGateKeeperBot<T> {
                             return;
                         }
                     };
-                    self.last_pic_date = std::time::Instant::now();
-                    self.last_pic_path = file_path.clone();
+                    self.picture_context.last_pic_date = std::time::Instant::now();
+                    self.picture_context.last_pic_path = file_path.clone();
                 }else{
-                    file_path = self.last_pic_path.clone();
+                    file_path = self.picture_context.last_pic_path.clone();
                 }
                 self.telegram_api.send_callback_answer(AnswerCallbackQuery{
                     callback_query_id: cleaned_callback_query.callback_id,
