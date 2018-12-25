@@ -2,12 +2,13 @@
 name = "Gate"
 version = "0.1.0"
 authors = ["Tiberio D A R Ferreira <tiberiusferreira@gmail.com>"]
+edition = "2018"
+
 [[bin]]
 name = "gate"
 path = "src/main.rs"
 
 [dependencies]
-serial = "0.4"
 flexi_logger = "*"
 log = "*"
 failure = "*"

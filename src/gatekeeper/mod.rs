@@ -1,10 +1,9 @@
-extern crate failure;
-mod update_handler;
+mod telegram_update_handler;
 mod gate_open_handler;
 
-extern crate sysfs_gpio;
+use self::gate_open_handler::*;
 use diesel::{PgConnection};
-use database::establish_connection;
+use crate::database::establish_connection;
 use std;
 use std::env;
 use teleborg::*;
@@ -12,36 +11,42 @@ use super::hardware::*;
 use crossbeam_channel as channel;
 use crossbeam_channel::Receiver;
 use crossbeam_channel::Sender;
-use self::sysfs_gpio::Edge;
-use database::models::CoffeezeraUser;
+use sysfs_gpio::Edge;
+//use self::gate_open_handler::CHAT_TO_SEND_MSG;
+use crate::database::models::CoffeezeraUser;
 
 pub struct GringosGateKeeperBot<T> where T: TelegramInterface{
     telegram_api: T,
     database_connection: PgConnection,
     hardware: Hardware,
     picture_context: PictureContext,
-    last_opening_by_bot: Option<LastOpeningData>,
-    instant_when_was_opened: Option<std::time::Instant>,
+    last_person_opened: Option<LastPersonOpened>,
+    last_gate_open_event: Option<LastGateOpenEvent>,
+    internal_events_sender: Sender<Event>,
+    internal_events_receiver: Option<Receiver<Event>>,
 }
+
 
 pub struct PictureContext{
     last_pic_date: std::time::Instant,
     last_pic_path: String,
 }
 
-pub struct LastOpeningData {
+pub struct LastGateOpenEvent{
+    instant_when_was_opened_if_is_open: std::time::Instant,
+    turned_on_spot_light: bool
+}
+
+pub struct LastPersonOpened {
     who_last_opened_it: CoffeezeraUser,
     when_user_opened: std::time::Instant,
+    sent_open_warning: bool,
 }
 
 
-pub enum NewState {
-    Opened,
-    Closed
-}
 
 pub enum Event{
-    GateStateChange(NewState),
+    GateStateChange(NewGateState),
     TelegramMessage(Vec<Update>),
     VerifyOpenTooLong
 }
@@ -53,6 +58,7 @@ impl <T: TelegramInterface> GringosGateKeeperBot<T> {
             .expect("Can't find TELEGRAM_GATE_BOT_ID env variable")
             .parse::<String>()
             .unwrap();
+        let (sender, receiver): (Sender<Event>, Receiver<Event>) = channel::unbounded();
         GringosGateKeeperBot {
             telegram_api: T::new(bot_token).unwrap(),
             database_connection: establish_connection(),
@@ -61,86 +67,40 @@ impl <T: TelegramInterface> GringosGateKeeperBot<T> {
                 last_pic_date: std::time::Instant::now(),
                 last_pic_path: "rep_now.jpg".to_string(),
             },
-            last_opening_by_bot: None,
-            instant_when_was_opened: None,
+            last_person_opened: None,
+            last_gate_open_event: None,
+            internal_events_sender: sender,
+            internal_events_receiver: Some(receiver),
         }
     }
 
     pub fn emergency_turn_off() {
         let hw = Hardware::new();
-        hw.turn_off_spotlight();
-        hw.close_gate();
+        hw.emergency_turn_off_spotlight();
+        hw.allow_lock();
     }
 
-    pub fn start(&mut self) {
-        let (sender, receiver): (Sender<Event>, Receiver<Event>) = channel::unbounded();
-        self.telegram_api.start_getting_updates();
-
-        let telegram_update_receiver = self.telegram_api.get_updates_channel().clone();
-        let telegram_thread_sender = sender.clone();
-        let gate_state_thread_sender = sender.clone();
-        std::thread::spawn(move || {
-            while let Some(update) = telegram_update_receiver.recv() {
-                telegram_thread_sender.send(Event::TelegramMessage(update));
-            }
-        });
 
 
+    fn start_getting_gate_state_changes(&mut self){
+        // get a sender reference clone
+        let event_sender = self.internal_events_sender.clone();
+        // closure to be executed on event
+        let on_gate_state_change = move |new_state: super::hardware::NewGateState|{
+            event_sender.send(Event::GateStateChange(new_state)).expect("Could not send gate change event!");
+        };
+        self.hardware.start_listening_gate_state_change(Box::new(on_gate_state_change));
+    }
 
-        let gate_open_sensor_clone = self.hardware.gate_open_sensor.clone();
+    pub fn start(mut self) {
+        // Start getting updates from Telegram lib
+        self.start_getting_telegram_updates();
 
+        // Start getting gate events
+        self.start_getting_gate_state_changes();
 
-        std::thread::spawn(move || {
-            gate_open_sensor_clone
-                .set_edge(Edge::BothEdges)
-                .expect("Sensor pin does not allow interrupts!");
-
-            let mut gate_open_poller = gate_open_sensor_clone
-                .get_poller()
-                .expect("Could not get pin Poller");
-            let mut last_value_sent = 2;
-            'wait_forever_for_gpio_change: loop {
-                // Wait until a change occurs
-                let mut latest_gpio_value_change = gate_open_poller.poll(-1)
-                    .unwrap_or_else(|e| panic!("Got error {} while polling GPIO pin.", e))
-                    .expect("Got none while polling GPIO, this should never happen since it has -1 as timeout");
-                // loop until value is stable
-                'wait_for_gpio_stabilization: loop {
-                    info!("GPIO value changed to {}. Waiting for stabilization.", latest_gpio_value_change);
-                    // Wait up to 500ms for a second change
-                    let maybe_second_gpio_value_change = gate_open_poller.poll(500)
-                        .unwrap_or_else(|e| panic!("Got error {} while polling GPIO pin.", e));
-                    match maybe_second_gpio_value_change {
-                        Some(second_gpio_value_change) => {
-                            info!("There was second change in the GPIO value in less than 500ms. Its not stable. New value is {}", second_gpio_value_change);
-                            latest_gpio_value_change = second_gpio_value_change;
-                            continue 'wait_for_gpio_stabilization;
-                        },
-                        None => {
-                            info!("GPIO did not change for 500ms, declaring it stable");
-                            let new_value = gate_open_sensor_clone.get_value()
-                                .expect("Could not read value from gate_open_sensor");
-                            if new_value != latest_gpio_value_change{
-                                error!("Value from stable change is different from actual value: Change = {} Actual = {}", latest_gpio_value_change, new_value);
-                            }
-                            if new_value == last_value_sent{
-                                info!("New stable value is the same as last one. No actual change occured.");
-                                continue 'wait_forever_for_gpio_change;
-                            }
-                            last_value_sent = new_value;
-                            if new_value == 0 {
-                                info!("Sending new GPIO change: 0");
-                                gate_state_thread_sender.send(Event::GateStateChange(NewState::Opened));
-                            } else {
-                                info!("Sending new GPIO change: 1");
-                                gate_state_thread_sender.send(Event::GateStateChange(NewState::Closed));
-                            }
-                            continue 'wait_forever_for_gpio_change;
-                        }
-                    }
-                }
-            }
-        });
+        let receiver = self.internal_events_receiver.take()
+            .expect("Someone already took the event receiver, this should never happen");
 
         loop {
             match receiver.recv().expect("Channel was closed! This should never happen!") {
@@ -150,22 +110,28 @@ impl <T: TelegramInterface> GringosGateKeeperBot<T> {
                     }
                 },
                 Event::GateStateChange(new_state) => {
-                    match new_state {
-                        NewState::Opened => {
-                            let timer_thread_sender = sender.clone();
-                            self.handle_gate_open(timer_thread_sender);
-                        },
-                        NewState::Closed => {
-                            if self.instant_when_was_opened.is_some() {
-                                self.hardware.turn_off_spotlight();
-                                self.instant_when_was_opened.take();
-                                self.telegram_api.send_msg(OutgoingMessage::new(75698394, "O portão foi fechado!"));
-                            }
-                        },
-                    }
+//                    match new_state {
+//                        NewGateState::OPEN => {
+//                            self.handle_gate_open();
+//                        },
+//                        NewGateState::CLOSED => {
+//                            self.hardware.turn_off_spotlight();
+//                            self.instant_when_was_opened.take();
+//                            let should_send_warning = self.last_opening_by_bot.as_ref()
+//                                .and_then(|data| Some(data.sent_open_warning && !data.sent_was_closed_info))
+//                                .unwrap_or(false);
+//                            if should_send_warning {
+//                                self.telegram_api.send_msg(OutgoingMessage::new(CHAT_TO_SEND_MSG, "O portão foi fechado!"));
+//                            }
+//                            if let Some(data) = self.last_opening_by_bot.as_mut(){
+//                                data.sent_was_closed_info = true;
+//                            }
+//                        },
+//                    }
                 },
                 Event::VerifyOpenTooLong => {
-                    self.check_gate_open_too_long();
+//                    let timer_thread_sender = sender.clone();
+//                    self.check_gate_open_too_long(timer_thread_sender);
                 }
             }
         }

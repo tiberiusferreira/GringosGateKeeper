@@ -1,6 +1,9 @@
 extern crate sysfs_gpio;
 extern crate chrono;
 
+mod gate_open_noise_filter;
+pub use self::gate_open_noise_filter::*;
+use log::info;
 use self::chrono::prelude::*;
 use self::sysfs_gpio::{Pin, Direction};
 use std::thread::sleep;
@@ -8,14 +11,15 @@ use std::time::Duration;
 use std::process::{Command};
 use failure::{Error};
 
-const GATE_OPEN_SENSOR: u64 = 25;
+const GATE_OPEN_SENSOR: u64 = 16;
 const GATE: u64 = 20;
 const SPOTLIGHT: u64 = 21;
 
 pub struct Hardware {
     gate: Pin,
     spotlight: Pin,
-    pub gate_open_sensor: Pin
+    pub gate_open_sensor: Pin,
+    spotlight_on_count: i64,
 }
 
 #[derive(Debug, Fail)]
@@ -50,54 +54,78 @@ impl Hardware {
         Hardware {
             gate,
             spotlight,
-            gate_open_sensor
+            gate_open_sensor,
+            spotlight_on_count: 0,
         }
     }
 
-    pub fn take_pic(&self) -> Result<String, Error>{
-        let file_name = "rep_now.jpg";
-        let dt = chrono::Local::now();
-        if !self.gate_is_open() {
-            if dt.hour() <= 7 || dt.hour() >= 17 {
-                self.turn_on_spotlight();
-            }
-        }
-        let status = Command::new("sh")
-            .arg("-c")
-            .arg(format!("fswebcam -S 5 -r 640x480 --flip v --flip h {}", file_name))
-            .status();
-        if !self.gate_is_open() {
-            self.turn_off_spotlight();
-        }
-        let status = status?;
-        if status.success(){
-            return Ok(file_name.to_string());
-        }else{
-            return Err(CameraCaptureError::CameraCaptureError{
-                code: status.code()
-            })?;
-        }
+    pub fn take_pic(&mut self) -> Result<String, Error>{
+//        let file_name = "rep_now.jpg";
+//        let dt = chrono::Local::now();
+//        if !self.gate_is_open() {
+//            if dt.hour() <= 7 || dt.hour() >= 17 {
+//                self.turn_on_spotlight();
+//            }
+//        }
+//        let status = Command::new("sh")
+//            .arg("-c")
+//            .arg(format!("fswebcam -S 5 -r 640x480 --flip v --flip h {}", file_name))
+//            .status();
+//        if !self.gate_is_open() {
+//            self.turn_off_spotlight();
+//        }
+//        let status = status?;
+//        if status.success(){
+//            return Ok(file_name.to_string());
+//        }else{
+//            return Err(CameraCaptureError::CameraCaptureError{
+//                code: status.code()
+//            })?;
+//        }
+        Ok("aa".to_string())
+    }
+
+    pub fn start_listening_gate_state_change(&mut self, call_on_state_change: Box<dyn Fn(NewGateState) -> () + Send>){
+        let gate_open_noise_filter = GateOpenNoiseFilter::new(
+            self.gate_open_sensor.clone(),
+                                                         call_on_state_change)
+            .start_getting_gate_state();
     }
 
     pub fn gate_is_open(&self) -> bool{
         return self.gate_open_sensor.get_value().expect(&format!("Could not get value of GATE_OPEN_SENSOR PIN {}", GATE_OPEN_SENSOR)) == 0;
     }
 
-    pub fn open_gate(&self){
+    pub fn unlock_gate(&self){
         self.gate.set_value(1).expect(&format!("Could not set GATE_PIN_NUMBER {} to 1", GATE));
         sleep(Duration::from_millis(500));
         self.gate.set_value(0).expect(&format!("Could not set GATE_PIN_NUMBER {} to 0", GATE));
     }
 
-    pub fn close_gate(&self){
+    pub fn allow_lock(&self){
         self.gate.set_value(0).expect(&format!("Could not set GATE_PIN_NUMBER {} to 0", GATE));
     }
 
-    pub fn turn_on_spotlight(&self){
+    pub fn turn_on_spotlight(&mut self){
+        self.spotlight_on_count += 1;
+        info!("spotlight_on_count increased to {}", self.spotlight_on_count);
         self.spotlight.set_value(1).expect(&format!("Could not set SPOTLIGHT_PIN {} to 0", SPOTLIGHT));
     }
-    pub fn turn_off_spotlight(&self){
+
+    pub fn turn_off_spotlight(&mut self){
+        self.spotlight_on_count -= 1;
+        info!("spotlight_on_count decreased to {}", self.spotlight_on_count);
+        if self.spotlight_on_count < 0{
+            error!("spotlight_on_count negative! {}", self.spotlight_on_count);
+        }
+        if self.spotlight_on_count == 0 {
+            self.spotlight.set_value(0).expect(&format!("Could not set SPOTLIGHT_PIN {} to 0", SPOTLIGHT));
+        }
+    }
+
+    pub fn emergency_turn_off_spotlight(&self){
         self.spotlight.set_value(0).expect(&format!("Could not set SPOTLIGHT_PIN {} to 0", SPOTLIGHT));
     }
+
 
 }

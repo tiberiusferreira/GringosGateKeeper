@@ -1,4 +1,3 @@
-extern crate serial;
 extern crate flexi_logger;
 extern crate teleborg;
 extern crate log_panics;
