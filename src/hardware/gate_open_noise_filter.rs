@@ -1,5 +1,5 @@
 extern crate sysfs_gpio;
-use self::sysfs_gpio::{Pin, Direction, PinPoller};
+use self::sysfs_gpio::{Pin, Direction, PinPoller, Edge};
 use std::{thread, time::Duration};
 
 pub struct GateOpenNoiseFilter{
@@ -25,20 +25,23 @@ impl GateOpenNoiseFilter{
     }
 
     pub fn start_getting_gate_state(mut self){
-        thread::spawn(move ||
+        thread::spawn(move || {
+            self.gate_open_pin.set_edge(Edge::BothEdges)
+                .expect("Could not enable both edges interrupt on Gate Open GPIO Pin");
+            thread::sleep(Duration::from_millis(500));
+            info!("Waiting for an interrupt on gate open pin");
+            let mut last_stable_state = self.get_current_state();
             loop {
-                let new_change = self.block_on_next_stable_state_change();
-                (self.call_on_state_change)(new_change);
+                info!("Initial gate open GPIO state: {:#?}", last_stable_state);
+                last_stable_state = self.block_on_next_stable_state_change(last_stable_state.clone());
+                (self.call_on_state_change)(last_stable_state.clone());
             }
-        );
+        });
     }
 
-    fn test_call_state_change(&self){
-        (self.call_on_state_change)(NewGateState::OPEN);
-    }
 
     fn map_u8_to_state(pin_value: u8) -> NewGateState {
-        if pin_value == 0{
+        if pin_value == 1{
             NewGateState::OPEN
         }else{
             NewGateState::CLOSED
@@ -52,9 +55,11 @@ impl GateOpenNoiseFilter{
         return pin_value;
     }
     fn get_gpio_change_blocking(&mut self) -> NewGateState {
+        info!("Blocking waiting for Pin Poller interrupt");
         let pin_value = self.gate_open_pin_poller.poll(-1)
             .unwrap_or_else(|e| panic!("Got error {} while polling GPIO pin.", e))
             .expect("Got none while polling GPIO, this should never happen since it has -1 as timeout");
+        info!("Got interrupt!");
         return Self::map_u8_to_state(pin_value);
     }
 
@@ -65,8 +70,7 @@ impl GateOpenNoiseFilter{
         return last_state;
     }
 
-    fn block_on_next_stable_state_change(&mut self) -> NewGateState {
-        let mut last_stable_state = self.get_current_state();
+    fn block_on_next_stable_state_change(&mut self, last_stable_state: NewGateState) -> NewGateState {
         'wait_forever_for_gpio_change: loop {
             // Wait until a change occurs
             let mut brand_new_state = self.get_gpio_change_blocking();
@@ -74,11 +78,11 @@ impl GateOpenNoiseFilter{
             'wait_for_gpio_stabilization: loop {
                 info!("GPIO value changed to {:#?}. Waiting for stabilization.", brand_new_state);
                 // Wait up to 500ms for a second change
-                let maybe_second_state_change= self.poll_new_state_up_to(500);
-                match maybe_second_state_change {
-                    Some(maybe_second_state_change) => {
-                        info!("There was second change in the GPIO value in less than 500ms. Its not stable. New value is {:#?}", maybe_second_state_change);
-                        brand_new_state = brand_new_state;
+                let maybe_another_state_change= self.poll_new_state_up_to(500);
+                match maybe_another_state_change {
+                    Some(another_state_change) => {
+                        info!("There was second change in the GPIO value in less than 500ms. Its not stable. New value is {:#?}", another_state_change);
+                        brand_new_state = another_state_change;
                         continue 'wait_for_gpio_stabilization;
                     },
                     None => {
@@ -90,9 +94,9 @@ impl GateOpenNoiseFilter{
                         if new_state == last_stable_state{
                             info!("New stable value is the same as last one. No actual change occured.");
                             continue 'wait_forever_for_gpio_change;
+                        }else {
+                            return new_state;
                         }
-                        last_stable_state = new_state;
-                        return last_stable_state;
                     }
                 }
             }

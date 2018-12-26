@@ -100,32 +100,30 @@ impl <T: TelegramInterface> GringosGateKeeperBot<T> {
                 });
             },
             TAKE_PIC => {
-//                let file_path;
-//                if self.picture_context.last_pic_date.elapsed().as_secs() > 10 {
-//                    file_path = match self.hardware.take_pic() {
-//                        Ok(file_path) => file_path,
-//                        Err(e) => {
-//                            error!("Error getting photo: {}", e);
-//                            self.telegram_api.send_callback_answer(AnswerCallbackQuery {
-//                                callback_query_id: cleaned_callback_query.callback_id,
-//                                text: Some("Problema com a camera vagabunda. Fale com @TiberioFerreira".to_string()),
-//                                show_alert: Some(false)
-//                            });
-//                            return;
-//                        }
-//                    };
-//                    self.picture_context.last_pic_date = std::time::Instant::now();
-//                    self.picture_context.last_pic_path = file_path.clone();
-//                }else{
-//                    file_path = self.picture_context.last_pic_path.clone();
-//                }
-//                self.telegram_api.send_callback_answer(AnswerCallbackQuery{
-//                    callback_query_id: cleaned_callback_query.callback_id,
-//                    text: Some("Enviando foto...".to_string()),
-//                    show_alert: Some(false)
-//                });
-//                self.telegram_api.send_photo(OutgoingPhoto::new(cleaned_callback_query.original_msg_chat_id, &file_path));
-//                self.send_default_msg(cleaned_callback_query.original_msg_chat_id);
+                let file_path;
+                self.telegram_api.send_callback_answer(AnswerCallbackQuery{
+                    callback_query_id: cleaned_callback_query.callback_id.clone(),
+                    text: Some("Tirando foto...".to_string()),
+                    show_alert: Some(false)
+                });
+                if self.picture_context.last_pic_date.elapsed().as_secs() > 3 {
+                    file_path = match self.hardware.take_pic() {
+                        Ok(file_path) => file_path,
+                        Err(e) => {
+                            error!("Error getting photo: {}", e);
+                            return;
+                        }
+                    };
+                    self.picture_context.last_pic_date = std::time::Instant::now();
+                    self.picture_context.last_pic_path = file_path.clone();
+                }else{
+                    file_path = self.picture_context.last_pic_path.clone();
+                }
+                self.telegram_api.send_msg(OutgoingMessage::new(
+                    cleaned_callback_query.original_msg_chat_id.clone(),
+                "Enviando Foto.."));
+                self.telegram_api.send_photo(OutgoingPhoto::new(cleaned_callback_query.original_msg_chat_id, &file_path));
+                self.send_default_msg(cleaned_callback_query.original_msg_chat_id);
             },
             e => {
                 error!("Unexpected Callback: {}", e);

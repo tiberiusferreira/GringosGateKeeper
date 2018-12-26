@@ -3,7 +3,7 @@ use std::time::*;
 use std::thread;
 use chrono::prelude::*;
 // pub const CHAT_TO_SEND_MSG: i64 = 75698394; // Tiberio
-pub const CHAT_TO_SEND_MSG: i64 = -1001121845452; // Rep
+// pub const CHAT_TO_SEND_MSG: i64 = -1001121845452; // Rep
 const NB_SEC_OPEN_TOO_LONG: u64 = 5*60;
 
 
@@ -27,11 +27,20 @@ impl <T: TelegramInterface> GringosGateKeeperBot<T> {
 //        })
 //    }
 
-    pub (crate) fn handle_gate_closed(&mut self){
-        self.hardware.turn_off_spotlight();
+    fn handle_gate_closed(&mut self){
+        // if it was turned on by an open event, turn spotlight off
+        if let Some(ref event) = self.last_gate_open_event{
+            if event.turned_on_spot_light{
+                self.hardware.turn_off_spotlight();
+            }
+        }
+        // get rid of open event since it was closed
+        self.last_gate_open_event.take();
     }
-    pub (crate) fn handle_gate_open(&mut self){
+    fn handle_gate_open(&mut self){
+
         let dt = chrono::Local::now();
+        // If is night time turn on spotlight and record that it was turned on
         if dt.hour() <= 6 || dt.hour() >= 18 {
             self.hardware.turn_on_spotlight();
             self.last_gate_open_event = Some(LastGateOpenEvent{
@@ -39,7 +48,7 @@ impl <T: TelegramInterface> GringosGateKeeperBot<T> {
                 turned_on_spot_light: true
             });
         }
-        
+
 
 //        if let Some(ref current_opening) = self.current_opening_by_bot {
 //

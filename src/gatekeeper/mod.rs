@@ -110,6 +110,8 @@ impl <T: TelegramInterface> GringosGateKeeperBot<T> {
                     }
                 },
                 Event::GateStateChange(new_state) => {
+                    info!("Got new state: {:#?}", new_state);
+                    self.handle_gate_state_change(new_state);
 //                    match new_state {
 //                        NewGateState::OPEN => {
 //                            self.handle_gate_open();
