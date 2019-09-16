@@ -14,10 +14,12 @@ use crossbeam_channel::Sender;
 use sysfs_gpio::Edge;
 //use self::gate_open_handler::CHAT_TO_SEND_MSG;
 use crate::database::models::CoffeezeraUser;
+use std::collections::HashMap;
 
 pub struct GringosGateKeeperBot<T> where T: TelegramInterface{
     telegram_api: T,
     database_connection: PgConnection,
+    last_open_request_without_confirmation: HashMap<i64, std::time::Instant>,
     hardware: Hardware,
     picture_context: PictureContext,
     last_person_opened: Option<LastPersonOpened>,
@@ -25,6 +27,7 @@ pub struct GringosGateKeeperBot<T> where T: TelegramInterface{
     internal_events_sender: Sender<Event>,
     internal_events_receiver: Option<Receiver<Event>>,
 }
+
 
 
 pub struct PictureContext{
@@ -44,9 +47,9 @@ pub struct LastPersonOpened {
 }
 
 
-
 pub enum Event{
     GateStateChange(NewGateState),
+    DeleteMsg(OutgoingDelete),
     TelegramMessage(Vec<Update>),
     VerifyOpenTooLong
 }
@@ -58,10 +61,12 @@ impl <T: TelegramInterface> GringosGateKeeperBot<T> {
             .expect("Can't find TELEGRAM_GATE_BOT_ID env variable")
             .parse::<String>()
             .unwrap();
+        // Bot main loop receives events from itself or other threads
         let (sender, receiver): (Sender<Event>, Receiver<Event>) = channel::unbounded();
         GringosGateKeeperBot {
             telegram_api: T::new(bot_token).unwrap(),
             database_connection: establish_connection(),
+            last_open_request_without_confirmation: HashMap::new(),
             hardware: Hardware::new(),
             picture_context: PictureContext{
                 last_pic_date: std::time::Instant::now(),
@@ -79,8 +84,6 @@ impl <T: TelegramInterface> GringosGateKeeperBot<T> {
         hw.emergency_turn_off_spotlight();
         hw.allow_lock();
     }
-
-
 
     fn start_getting_gate_state_changes(&mut self){
         // get a sender reference clone
@@ -134,6 +137,9 @@ impl <T: TelegramInterface> GringosGateKeeperBot<T> {
                 Event::VerifyOpenTooLong => {
 //                    let timer_thread_sender = sender.clone();
 //                    self.check_gate_open_too_long(timer_thread_sender);
+                },
+                Event::DeleteMsg(data)=>{
+                    self.telegram_api.delete_message(data);
                 }
             }
         }

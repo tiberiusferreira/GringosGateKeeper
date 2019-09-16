@@ -4,10 +4,12 @@ use teleborg::*;
 use super::*;
 use std;
 use std::time::Instant;
+use failure::_core::time::Duration;
 
 const OPEN: &str  = "Abrir";
 const TAKE_PIC: &str  = "Tirar Foto";
-
+const YES_OPEN: &str  = "Sim, quero abrir";
+const TIME_ALLOWED_FOR_CONFIRMATION: u64 = 5;
 
 
 impl <T: TelegramInterface> GringosGateKeeperBot<T> {
@@ -75,9 +77,33 @@ impl <T: TelegramInterface> GringosGateKeeperBot<T> {
         self.telegram_api.send_msg(message);
     }
 
+    fn send_open_confirmation_msg_blocking(&self, chat_id: i64) -> Result<i64, ()>{
+        let mut message = OutgoingMessage::new(chat_id, &format!("Tem certeza que deseja abrir? Esta msg é válida por {}s", TIME_ALLOWED_FOR_CONFIRMATION));
+        message.with_reply_markup(vec![vec![YES_OPEN.to_string()]]);
+        let msg: Message  = self.telegram_api.send_msg_blocking(message)?;
+        Ok(msg.message_id)
+    }
+
     fn send_not_registered_msg(&self, chat_id: i64, sender_id: i64){
         let message = OutgoingMessage::new(chat_id, &format!("Você não está registrado. Envie essa mensagem com seu id: {} para @TiberioFerreira.", sender_id));
         self.telegram_api.send_msg(message);
+    }
+
+    fn delete_msg_after(&self, chat_id: i64, msg_id: i64, seconds: u64){
+        let message = OutgoingDelete{
+            chat_id,
+            message_id: msg_id
+        };
+        let sender: Sender<Event> = self.internal_events_sender.clone();
+        std::thread::spawn(move||{
+            std::thread::sleep(Duration::from_secs(seconds as u64));
+            let delete_data = super::OutgoingDelete {
+                chat_id,
+                message_id: msg_id
+            };
+            sender.send(Event::DeleteMsg(delete_data)).unwrap();
+        });
+
     }
 
     fn handle_msg(&self, cleaned_msg: CleanedMessage){
@@ -87,6 +113,45 @@ impl <T: TelegramInterface> GringosGateKeeperBot<T> {
     fn handle_callback(&mut self, cleaned_callback_query: CleanedCallbackQuery, db_user: CoffeezeraUser){
         match cleaned_callback_query.data.as_ref() {
             OPEN => {
+                match self.send_open_confirmation_msg_blocking(cleaned_callback_query.original_msg_chat_id){
+                    Ok(msg_id) => {
+                        self.delete_msg_after(cleaned_callback_query.original_msg_chat_id, msg_id, TIME_ALLOWED_FOR_CONFIRMATION);
+                        let people: &mut HashMap<i64, std::time::Instant> = &mut self.last_open_request_without_confirmation;
+                        people.insert(cleaned_callback_query.sender_id, std::time::Instant::now());
+                        info!("{:?}", people);
+                    },
+                    Err(()) => {
+                        error!("Error sending confirmation msg");
+                        return;
+                    }
+                }
+
+//                self.hardware.unlock_gate();
+//                self.last_person_opened = Some(LastPersonOpened {
+//                    who_last_opened_it: db_user,
+//                    when_user_opened: Instant::now(),
+//                    sent_open_warning: false,
+//                });
+//                self.telegram_api.send_callback_answer(AnswerCallbackQuery{
+//                    callback_query_id: cleaned_callback_query.callback_id,
+//                    text: Some("Aberto".to_string()),
+//                    show_alert: Some(false)
+//                });
+            },
+            YES_OPEN => {
+                let people: &mut HashMap<i64, std::time::Instant> = &mut self.last_open_request_without_confirmation;
+                people.retain(|telegram_id, instant|{
+                    info!("Removing telegram_id: {:?} inserted at {:?}", telegram_id, instant);
+                   return instant.elapsed().as_secs() < TIME_ALLOWED_FOR_CONFIRMATION
+                });
+                if people.get(&cleaned_callback_query.sender_id).is_none(){
+                    let delete_data = super::OutgoingDelete {
+                        chat_id: cleaned_callback_query.original_msg_chat_id,
+                        message_id: cleaned_callback_query.original_msg_id
+                    };
+                    self.internal_events_sender.send(Event::DeleteMsg(delete_data)).unwrap();
+                    return;
+                }
                 self.hardware.unlock_gate();
                 self.last_person_opened = Some(LastPersonOpened {
                     who_last_opened_it: db_user,

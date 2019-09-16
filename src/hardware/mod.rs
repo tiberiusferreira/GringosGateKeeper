@@ -60,7 +60,7 @@ impl Hardware {
         let process = Command::new("raspistill")
             .arg("-vf")
             .arg("-hf")
-            .args(&["-roi", "0,0.15,0.95,0.55"])
+            //.args(&["-roi", "0,0.15,0.95,0.55"])
             .arg("-th")
             .arg("none")
             .arg("-n")
