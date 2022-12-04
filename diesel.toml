@@ -1,3 +1,0 @@
-[print_schema]
-filter = { only_tables = ["coffeezera_users"] }
-file = "./src/bin/coffeezera/database/schema.rs"

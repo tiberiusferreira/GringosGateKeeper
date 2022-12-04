@@ -1,160 +1,171 @@
-extern crate sysfs_gpio;
-extern crate chrono;
-
-mod gate_open_noise_filter;
-pub use self::gate_open_noise_filter::*;
-use log::info;
-use self::chrono::prelude::*;
-use self::sysfs_gpio::{Pin, Direction};
+use std::sync::Arc;
 use std::thread::sleep;
 use std::time::Duration;
-use std::process::{Command};
-use failure::{Error};
-use std::fs;
+use sysfs_gpio::{Direction, Pin};
+use tokio::sync::RwLock;
+use tracing::info;
 
-const GATE_OPEN_SENSOR: u64 = 16;
-const GATE: u64 = 20;
-const SPOTLIGHT: u64 = 21;
-const IMG_FILE_NAME: &'static str = "gringos_now.jpg";
-pub struct Hardware {
+const GATE: u64 = 26;
+const SPOTLIGHT: u64 = 17;
+
+pub struct RealHardware {
     gate: Pin,
     spotlight: Pin,
-    pub gate_open_sensor: Pin,
-    spotlight_on_count: i64,
-    camera_process_id: u32
 }
 
-#[derive(Debug, Fail)]
-pub enum CameraCaptureError {
-    #[fail(display = "Camera command exited with non-zero code {:?}", code)]
-    CameraCaptureError{
-        code: Option<i32>
+pub struct MockHardware {}
+
+impl MockHardware {
+    pub fn new() -> MockHardware {
+        Self {}
     }
 }
 
-impl Hardware {
-    pub fn new() -> Self{
-        let gate = Pin::new(GATE);
-        gate.export().expect(&format!("Could not export pin {} to user space.", GATE));
-        sleep(Duration::from_millis(500));
-        gate.set_direction(Direction::Out).expect(&format!("Could not set pin {} direction to Out", GATE));
-        sleep(Duration::from_millis(500));
-        gate.set_value(0).expect(&format!("Could not set GATE_PIN_NUMBER {} to 0 on startup", GATE));
+pub struct GateHardwareInner<T: RawHardware> {
+    hardware: T,
+    instant_to_turn_off: Option<std::time::Instant>,
+}
 
-        let gate_open_sensor = Pin::new(GATE_OPEN_SENSOR);
-        gate_open_sensor.export().expect(&format!("Could not export pin {} to user space.", GATE_OPEN_SENSOR));
+pub struct RefCountedGateHardware<T: RawHardware> {
+    inner: Arc<RwLock<GateHardwareInner<T>>>,
+}
+
+impl<T: RawHardware> RefCountedGateHardware<T> {
+    pub fn new_mock() -> RefCountedGateHardware<MockHardware> {
+        RefCountedGateHardware {
+            inner: Arc::new(RwLock::new(GateHardwareInner {
+                hardware: MockHardware::new(),
+                instant_to_turn_off: None,
+            })),
+        }
+    }
+
+    pub fn new_real_hardware() -> RefCountedGateHardware<RealHardware> {
+        RefCountedGateHardware {
+            inner: Arc::new(RwLock::new(GateHardwareInner {
+                hardware: RealHardware::new(),
+                instant_to_turn_off: None,
+            })),
+        }
+    }
+
+    fn new_ref_counted(&self) -> RefCountedGateHardware<T> {
+        Self {
+            inner: Arc::clone(&self.inner),
+        }
+    }
+
+    pub async fn is_spotlight_on(&self) -> bool {
+        self.inner.read().await.instant_to_turn_off.is_some()
+    }
+
+    async fn check_spotlight_should_be_turned_off(&self) {
+        let mut write_ref = self.inner.write().await;
+        if let Some(instant_to_turn_off) = &write_ref.instant_to_turn_off {
+            if &std::time::Instant::now() >= instant_to_turn_off {
+                info!("Its time to turn off spotlight, turning it off");
+                write_ref.hardware.turn_off_spotlight();
+                write_ref.instant_to_turn_off.take();
+            } else {
+                info!("Its not time yet to turn off spotlight");
+            }
+        } else {
+            info!("There is no time to turn off the spotlight, must already be off");
+        }
+    }
+
+    pub async fn unlock_gate(&self) {
+        self.inner.write().await.hardware.unlock_gate();
+    }
+
+    pub async fn turn_on_spotlight(&self, duration: Duration) {
+        let mut write_lock = self.inner.write().await;
+        write_lock.hardware.turn_on_spotlight();
+        write_lock.instant_to_turn_off = Some(std::time::Instant::now() + duration);
+        let self_ref = self.new_ref_counted();
+        tokio::task::spawn(async move {
+            tokio::time::sleep(duration).await;
+            info!("Checking if its time to turn off spotlight");
+            self_ref.check_spotlight_should_be_turned_off().await;
+        });
+    }
+}
+impl RawHardware for RealHardware {
+    fn unlock_gate(&mut self) {
+        self.gate
+            .set_value(1)
+            .expect(&format!("Could not set GATE_PIN_NUMBER {} to 1", GATE));
         sleep(Duration::from_millis(500));
-        gate_open_sensor.set_direction(Direction::In).expect(&format!("Could not set pin {} direction to In", GATE_OPEN_SENSOR));
+        self.gate
+            .set_value(0)
+            .expect(&format!("Could not set GATE_PIN_NUMBER {} to 0", GATE));
+    }
+
+    fn turn_on_spotlight(&mut self) {
+        self.spotlight
+            .set_value(1)
+            .expect(&format!("Could not set SPOTLIGHT_PIN {} to 0", SPOTLIGHT));
+    }
+
+    fn turn_off_spotlight(&mut self) {
+        self.spotlight
+            .set_value(0)
+            .expect(&format!("Could not set SPOTLIGHT_PIN {} to 1", SPOTLIGHT));
+    }
+}
+impl RawHardware for MockHardware {
+    fn unlock_gate(&mut self) {
+        sleep(Duration::from_millis(500));
+        info!("Unlocked");
+    }
+
+    fn turn_on_spotlight(&mut self) {
+        sleep(Duration::from_millis(500));
+        info!("Spotlight On");
+    }
+
+    fn turn_off_spotlight(&mut self) {
+        sleep(Duration::from_millis(500));
+        info!("Spotlight Off");
+    }
+}
+
+pub trait RawHardware: Send + Sync + 'static {
+    fn unlock_gate(&mut self);
+
+    fn turn_on_spotlight(&mut self);
+
+    fn turn_off_spotlight(&mut self);
+}
+
+impl RealHardware {
+    pub fn new() -> Self {
+        let gate = Pin::new(GATE);
+        gate.export()
+            .expect(&format!("Could not export pin {} to user space.", GATE));
+        sleep(Duration::from_millis(500));
+        gate.set_direction(Direction::Out)
+            .expect(&format!("Could not set pin {} direction to Out", GATE));
+        sleep(Duration::from_millis(500));
+        gate.set_value(0).expect(&format!(
+            "Could not set GATE_PIN_NUMBER {} to 0 on startup",
+            GATE
+        ));
 
         let spotlight = Pin::new(SPOTLIGHT);
-        spotlight.export().expect(&format!("Could not export pin {} to user space.", SPOTLIGHT));
+        spotlight.export().expect(&format!(
+            "Could not export pin {} to user space.",
+            SPOTLIGHT
+        ));
         sleep(Duration::from_millis(500));
-        spotlight.set_direction(Direction::Out).expect(&format!("Could not set pin {} direction to Out", SPOTLIGHT));
-        spotlight.set_value(0).expect(&format!("Could not set SPOTLIGHT_PIN {} to 0 on startup", GATE));
+        spotlight
+            .set_direction(Direction::Out)
+            .expect(&format!("Could not set pin {} direction to Out", SPOTLIGHT));
+        spotlight.set_value(0).expect(&format!(
+            "Could not set SPOTLIGHT_PIN {} to 0 on startup",
+            GATE
+        ));
 
-        Command::new("killall")
-            .arg("raspistill")
-            .output().expect("Could not kill previous raspistill process");
-
-        // raspistill -vf -hf -roi 0,0.15,0.95,0.55 -th none -n -s -q 10 -t 0 -o gringos_now.jpg
-        let process = Command::new("raspistill")
-            .arg("-vf")
-            .arg("-hf")
-            //.args(&["-roi", "0,0.15,0.95,0.55"])
-            .arg("-th")
-            .arg("none")
-            .arg("-n")
-            .arg("-s")
-            .arg("-q")
-            .arg("10")
-            .arg("-t")
-            .arg("0")
-            .arg("-o")
-            .arg("gringos_now.jpg")
-            .spawn()
-            .expect("command failed to start");
-
-        let camera_process_id = process.id();
-
-        Hardware {
-            gate,
-            spotlight,
-            gate_open_sensor,
-            spotlight_on_count: 0,
-            camera_process_id
-        }
+        RealHardware { gate, spotlight }
     }
-
-    pub fn take_pic(&mut self) -> Result<String, String>{
-
-        let dt = chrono::Local::now();
-        let turned_on_spotlight;
-        if dt.hour() <= 7 || dt.hour() >= 17 {
-            self.turn_on_spotlight();
-            turned_on_spotlight = true;
-            // delay for camera to stabilize to new light condition
-            sleep(Duration::from_millis(1000));
-        }else{
-            turned_on_spotlight = false;
-        }
-
-        let process = Command::new("kill")
-            .arg("-USR1")
-            .arg(format!("{}", self.camera_process_id))
-            .spawn();
-
-        sleep(Duration::from_millis(1000));
-
-        if turned_on_spotlight{
-            self.turn_off_spotlight();
-        }
-
-        let process = process.expect(&format!("command kill -USR1 {} failed", self.camera_process_id));
-
-        Ok(IMG_FILE_NAME.to_string())
-    }
-
-    pub fn start_listening_gate_state_change(&mut self, call_on_state_change: Box<dyn Fn(NewGateState) -> () + Send>){
-        GateOpenNoiseFilter::new(
-            self.gate_open_sensor.clone(),
-            call_on_state_change)
-            .start_getting_gate_state();
-    }
-
-    pub fn gate_is_open(&self) -> bool{
-        return self.gate_open_sensor.get_value().expect(&format!("Could not get value of GATE_OPEN_SENSOR PIN {}", GATE_OPEN_SENSOR)) == 1;
-    }
-
-    pub fn unlock_gate(&self){
-        self.gate.set_value(1).expect(&format!("Could not set GATE_PIN_NUMBER {} to 1", GATE));
-        sleep(Duration::from_millis(500));
-        self.gate.set_value(0).expect(&format!("Could not set GATE_PIN_NUMBER {} to 0", GATE));
-    }
-
-    pub fn allow_lock(&self){
-        self.gate.set_value(0).expect(&format!("Could not set GATE_PIN_NUMBER {} to 0", GATE));
-    }
-
-    pub fn turn_on_spotlight(&mut self){
-        self.spotlight_on_count += 1;
-        info!("spotlight_on_count increased to {}", self.spotlight_on_count);
-        self.spotlight.set_value(1).expect(&format!("Could not set SPOTLIGHT_PIN {} to 0", SPOTLIGHT));
-    }
-
-    pub fn turn_off_spotlight(&mut self){
-        self.spotlight_on_count -= 1;
-        info!("spotlight_on_count decreased to {}", self.spotlight_on_count);
-        if self.spotlight_on_count < 0{
-            error!("spotlight_on_count negative! {}", self.spotlight_on_count);
-        }
-        if self.spotlight_on_count == 0 {
-            self.spotlight.set_value(0).expect(&format!("Could not set SPOTLIGHT_PIN {} to 0", SPOTLIGHT));
-        }
-    }
-
-    pub fn emergency_turn_off_spotlight(&self){
-        self.spotlight.set_value(0).expect(&format!("Could not set SPOTLIGHT_PIN {} to 0", SPOTLIGHT));
-    }
-
-
 }
