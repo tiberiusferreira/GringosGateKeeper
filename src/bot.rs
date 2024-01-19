@@ -19,7 +19,7 @@ pub struct UserRequest {
 #[derive(Debug)]
 enum RequestedAction {
     TurnOnLight { callback_id: String },
-    PrepareOpen,
+    PrepareOpen { callback_id: String },
     ConfirmOpen { callback_id: String },
     Unclassified,
 }
@@ -36,7 +36,9 @@ impl RequestedAction {
             "Luz 3min" => TurnOnLight {
                 callback_id: callback_query_id,
             },
-            "Abrir" => PrepareOpen,
+            "Abrir" => PrepareOpen {
+                callback_id: callback_query_id,
+            },
             "Confirmar Abrir" => ConfirmOpen {
                 callback_id: callback_query_id,
             },
@@ -63,7 +65,6 @@ pub async fn handle_update<T: RawHardware>(
     };
     let authorized_user = match user {
         None => return Some(unauthorized(user_id)),
-        Some(user) if !user.is_resident => return Some(unauthorized(user_id)),
         Some(authorized_user) => authorized_user,
     };
 
@@ -94,13 +95,13 @@ pub async fn handle_user_request<T: RawHardware>(
                 Some(light_turned_on_response(callback_id))
             }
         }
-        PrepareOpen => {
+        PrepareOpen { callback_id } => {
             state
                 .open_requests_waiting_confirmation
                 .write()
                 .await
                 .insert(user_id, std::time::Instant::now());
-            Some(prepare_open_message(user_id))
+            Some(prepare_open_message(user_id, callback_id))
         }
         ConfirmOpen { callback_id } => {
             let read_guard = state.open_requests_waiting_confirmation.read().await;
@@ -129,13 +130,17 @@ fn parse_user_request(update: TelegramUpdate) -> UserRequest {
     }
 }
 
-fn prepare_open_message(user_id: i64) -> TelegramResponse {
+fn prepare_open_message(user_id: i64, callback_query_id: String) -> TelegramResponse {
     TelegramResponse::DeletableOutgoingMessage(DeletableOutgoingMessage {
         outgoing_msg: OutgoingMessage {
             user_id,
             message: "Você realmente quer abrir? Essa messagem vai desaparecer em 5s".to_string(),
             buttons: Some(RequestedAction::confirm_open_button()),
         },
+        button_answer: Some(ButtonAnswer {
+            callback_query_id,
+            message: "Veja quem está na porta antes de abrir!".to_string(),
+        }),
         delete_after: Some(Duration::new(5, 0)),
     })
 }
@@ -169,6 +174,7 @@ fn default_message(user_id: i64) -> TelegramResponse {
             buttons: Some(RequestedAction::default_buttons()),
         },
         delete_after: None,
+        button_answer: None,
     })
 }
 
@@ -179,6 +185,7 @@ fn unauthorized(user_id: i64) -> TelegramResponse {
             message: format!("Você não está cadastrado. Envie essa mensagem para @TiberioFerreira com seu id: {}", user_id),
             buttons: None,
         },
+        button_answer: None,
         delete_after: None
     })
 }

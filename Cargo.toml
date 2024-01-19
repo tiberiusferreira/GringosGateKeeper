@@ -13,11 +13,11 @@ tokio = { version = "1", features = ["full"]}
 tracing-appender = "0.2"
 tracing = {version="0.1"}
 time = {version="0.3.17", features=['local-offset']}
-sqlx = {version = "0.6.2", features=["runtime-tokio-native-tls", "postgres", "offline"]}
+sqlx = {version = "0.7.3", features=["runtime-tokio-native-tls", "postgres"]}
 
 tracing-subscriber = {version="0.3", features=['env-filter', 'time']}
-thiserror = "1.0.37"
-frankenstein = { version = "0.21", default-features = false, features = ["async-http-client"] }
+thiserror = "1.0.56"
+frankenstein = { version = "0.30.2", default-features = false, features = ["async-http-client"] }
 log-panics = "2.1.0"
 dotenv = "0.15.0"
 sysfs_gpio = "0.6.1"

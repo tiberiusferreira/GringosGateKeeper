@@ -41,6 +41,7 @@ pub struct ButtonAnswer {
 #[derive(Debug, Clone)]
 pub struct DeletableOutgoingMessage {
     pub outgoing_msg: OutgoingMessage,
+    pub button_answer: Option<ButtonAnswer>,
     pub delete_after: Option<Duration>,
 }
 
@@ -64,7 +65,18 @@ pub trait TelegramInterface {
         &self,
         msg: DeletableOutgoingMessage,
     ) -> Result<(), String> {
-        let msg_id = self.send_message(msg.outgoing_msg.clone()).await?;
+        let answer_button_task = async {
+            if let Some(button_answer) = msg.button_answer {
+                debug!("Sending button answer {button_answer:#?}",);
+                self.send_button_answer(button_answer).await
+            } else {
+                Ok(())
+            }
+        };
+        let (_, msg_id) = tokio::try_join!(
+            answer_button_task,
+            self.send_message(msg.outgoing_msg.clone())
+        )?;
         if let Some(deleted_after) = msg.delete_after {
             tokio::time::sleep(deleted_after).await;
             debug!(

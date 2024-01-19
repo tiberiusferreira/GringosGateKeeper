@@ -4,14 +4,14 @@ mod hardware;
 
 use crate::bot::handle_update;
 use crate::database::Database;
-use crate::hardware::{RawHardware, RealHardware, RefCountedGateHardware};
+use crate::hardware::{MockHardware, RawHardware, RealHardware, RefCountedGateHardware};
 use crate::telegram::{FrankensteinWrapper, TelegramInterface};
 use sqlx::postgres::PgPoolOptions;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::sync::RwLock;
-use tracing::error;
+use tracing::{error, info};
 use tracing_appender::non_blocking::WorkerGuard;
 use tracing_appender::rolling::{RollingFileAppender, Rotation};
 use tracing_subscriber::{fmt::time::OffsetTime, EnvFilter};
@@ -30,7 +30,7 @@ fn start_logging() -> WorkerGuard {
         .with_timer(timer)
         .with_ansi(false)
         .with_writer(non_blocking)
-        .with_env_filter(EnvFilter::new("gate=debug"))
+        .with_env_filter(EnvFilter::from_default_env())
         .with_filter_reloading();
     subscriber.init();
     logs_flush_guard
@@ -46,21 +46,24 @@ pub struct State<T: RawHardware> {
 async fn main() {
     dotenv::dotenv().ok();
     let _guard = start_logging();
+    info!("Starting Up!");
     let old_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |panic| {
         error!("{}", panic.to_string());
         old_hook(panic);
     }));
+    info!("Connecting to the DB");
     let pg_db_pool = PgPoolOptions::new()
         .max_connections(3)
         .connect(&std::env::var("DATABASE_URL").unwrap())
         .await
         .expect("Error connecting to the DB");
+    info!("Connected!");
     let db = Database::new(pg_db_pool);
     let mut fk = FrankensteinWrapper::new();
     let mut receiver = fk.start_getting_updates();
     let state = Arc::new(State {
-        hw: RefCountedGateHardware::<RealHardware>::new_real_hardware(),
+        hw: RefCountedGateHardware::<MockHardware>::new_mock(),
         open_requests_waiting_confirmation: RwLock::new(HashMap::new()),
         db,
     });

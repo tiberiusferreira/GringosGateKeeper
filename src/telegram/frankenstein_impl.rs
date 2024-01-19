@@ -8,7 +8,7 @@ use frankenstein::{
 use std::sync::Arc;
 use tokio::sync::mpsc::Receiver;
 
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, trace};
 
 #[derive(Clone)]
 pub struct FrankensteinWrapper {
@@ -115,6 +115,8 @@ impl TelegramInterface for FrankensteinWrapper {
             loop {
                 match telegram_receiver.get_updates().await {
                     Ok(updates) => {
+                        debug!("Got {} updates!", updates.len());
+                        trace!("{:#?}", updates);
                         if !updates.is_empty() {
                             if let Err(e) = tx.try_send(updates) {
                                 error!("Sending updates: {e:?}");
@@ -158,6 +160,7 @@ impl TelegramInterface for FrankensteinWrapper {
                     web_app: None,
                     switch_inline_query: None,
                     switch_inline_query_current_chat: None,
+                    switch_inline_query_chosen_chat: None,
                     callback_game: None,
                     pay: None,
                 })
@@ -172,12 +175,11 @@ impl TelegramInterface for FrankensteinWrapper {
             text: msg.message,
             parse_mode: None,
             entities: None,
-            disable_web_page_preview: None,
             disable_notification: None,
             protect_content: None,
-            reply_to_message_id: None,
-            allow_sending_without_reply: None,
             reply_markup: buttons,
+            link_preview_options: None,
+            reply_parameters: None,
         };
         let msg_id = self
             .telegram
